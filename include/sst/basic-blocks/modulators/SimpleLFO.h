@@ -55,7 +55,20 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
     float rngHistory[4]{0, 0, 0, 0};
 
     float rngCurrent{0};
-
+    float deformCurrent{2};
+    static constexpr size_t rnd_upsamplesize = 512;
+    float curRndWeights[rnd_upsamplesize] = {0};
+    static constexpr size_t num_rnd_rows = 8;
+    static constexpr size_t num_rnd_cols = 7;
+    const float rndWeights[num_rnd_rows][num_rnd_cols] = {
+        {1.0, 0.10, 0.01, 0.00, 0.01, 0.10, 1.0},
+        {1.0, 0.20, 0.10, 0.01, 0.10, 0.20, 1.0},
+        {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        {0.01, 0.05, 0.3, 1.0, 0.3, 0.05, 0.01},
+        {0.00, 0.01, 0.3, 1.0, 0.3, 0.01, 0.00},
+        {0.001, 0.01, 0.02, 1.0, 0.02, 0.01, 0.001},
+        {1.0, 0.579, 0.296, 0.125, 0.037, 0.005, 0.0},
+        {0.0, 0.005, 0.037, 0.125, 0.296, 0.579, 1.0}};
     SimpleLFO(SRProvider *s, sst::basic_blocks::dsp::RNG &extRng) : srProvider(s), objrngRef(extRng)
     {
         urng = [this]() -> float { return objrngRef.unifPM1(); };
@@ -89,7 +102,9 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
         SMOOTH_NOISE,
         SH_NOISE,
         RANDOM_TRIGGER,
-        SAW_TRI_RAMP
+        SAW_TRI_RAMP,
+        SMOOTH_MORPHRND,
+        SH_MORPHRND
     };
 
     float lastTarget{0};
@@ -150,11 +165,95 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
         rngState[1] = urng();
         for (int i = 0; i < 4; ++i)
         {
-            rngCurrent = dsp::correlated_noise_o2mk2_suppliedrng(rngState[0], rngState[1], 0, urng);
+            if (lshape == SMOOTH_NOISE || lshape == SH_NOISE)
+                rngCurrent =
+                    dsp::correlated_noise_o2mk2_suppliedrng(rngState[0], rngState[1], 0, urng);
+            if (lshape == SMOOTH_MORPHRND || lshape == SH_MORPHRND)
+                rngCurrent = gen_morphed_random(0.0f);
             rngHistory[3 - i] = rngCurrent;
         }
         lastDPhase = 0;
         amplitude = 1;
+    }
+
+    float gen_morphed_random(float d)
+    {
+        if (d != deformCurrent)
+        {
+            float morph = (num_rnd_rows - 1) * ((d + 1.0f) * 0.5f);
+            int ind0 = (int)morph;
+            int ind1 = ind0 + 1;
+            if (ind1 >= num_rnd_rows)
+                ind1 = num_rnd_rows - 1;
+            float frac = morph - (int)morph;
+            float temp0[num_rnd_cols];
+            float temp1[num_rnd_cols];
+            float temp2[num_rnd_cols];
+            // we could avoid this normalization stuff if the weight tables
+            // prenormalized, but not going to bother with that for now
+            float sum0 = 0.0;
+            float sum1 = 0.0;
+            for (size_t i = 0; i < num_rnd_cols; ++i)
+            {
+                sum0 += rndWeights[ind0][i];
+                sum1 += rndWeights[ind1][i];
+            }
+            for (size_t i = 0; i < num_rnd_cols; ++i)
+            {
+                temp0[i] = rndWeights[ind0][i] * (1.0 / sum0);
+                temp1[i] = rndWeights[ind1][i] * (1.0 / sum1);
+            }
+            // we now have normalized weights, interpolate between them
+            for (size_t i = 0; i < num_rnd_cols; ++i)
+            {
+                float x0 = temp0[i];
+                float x1 = temp1[i];
+                float y = x0 + (x1 - x0) * frac;
+                temp2[i] = y;
+            }
+            // now we upsample for our "fake" continuous distribution
+            sum0 = 0.0;
+            for (size_t i = 0; i < rnd_upsamplesize; ++i)
+            {
+                float x = (float)num_rnd_cols / (rnd_upsamplesize - 1) * i;
+                int ind0 = (int)x;
+                int ind1 = ind0 + 1;
+                if (ind1 >= num_rnd_cols)
+                    ind1 = num_rnd_cols - 1;
+                float frac = x - (int)x;
+                float y0 = temp2[ind0];
+                float y1 = temp2[ind1];
+                float y = y0 + (y1 - y0) * frac;
+                sum0 += y;
+                curRndWeights[i] = y;
+            }
+            // and yet again, normalize...
+            for (size_t i = 0; i < rnd_upsamplesize; ++i)
+            {
+                curRndWeights[i] *= 1.0 / sum0;
+            }
+            deformCurrent = d;
+        }
+        auto z = (urng() + 1.0f) * 0.5;
+        float x = 0.0;
+        int index = -1;
+        for (size_t i = 0; i < rnd_upsamplesize; ++i)
+        {
+            if (z > x)
+            {
+                index = i;
+            }
+            else
+            {
+                break;
+            }
+            x += curRndWeights[i];
+        }
+        assert(index >= 0 && index < rnd_upsamplesize);
+        z = 1.0 / (rnd_upsamplesize - 1) * index;
+        // bipolar!?
+        z = -1.0 + 2.0 * z;
+        return z;
     }
 
     bool needsRandomRestart{false};
@@ -165,7 +264,8 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
         for (int i = 0; i < BLOCK_SIZE; ++i)
             outputBlock[i] = 0;
 
-        if (lshape == SH_NOISE || lshape == SMOOTH_NOISE)
+        if (lshape == SH_NOISE || lshape == SMOOTH_NOISE || lshape == SMOOTH_MORPHRND ||
+            lshape == SH_MORPHRND)
         {
             needsRandomRestart = true;
             phase = 1.000001;
@@ -219,7 +319,8 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
 
         if (phase > 1 || phase < 0)
         {
-            if (lshape == SH_NOISE || lshape == SMOOTH_NOISE)
+            if (lshape == SH_NOISE || lshape == SMOOTH_NOISE || lshape == SMOOTH_MORPHRND ||
+                lshape == SH_MORPHRND)
             {
                 // The deform can push correlated noise out of bounds
                 auto ud = d * 0.8;
@@ -228,9 +329,11 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
                     restartRandomSequence(ud);
                     needsRandomRestart = false;
                 }
-                rngCurrent =
-                    dsp::correlated_noise_o2mk2_suppliedrng(rngState[0], rngState[1], ud, urng);
-
+                if (lshape == SMOOTH_NOISE || lshape == SH_NOISE)
+                    rngCurrent =
+                        dsp::correlated_noise_o2mk2_suppliedrng(rngState[0], rngState[1], ud, urng);
+                else if (lshape == SMOOTH_MORPHRND || lshape == SH_MORPHRND)
+                    rngCurrent = gen_morphed_random(d);
                 rngHistory[3] = rngHistory[2];
                 rngHistory[2] = rngHistory[1];
                 rngHistory[1] = rngHistory[0];
@@ -368,6 +471,7 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
             }
             break;
         case SH_NOISE:
+        case SH_MORPHRND:
             target = rngCurrent;
             if (phaseDeformAngle > 0)
             {

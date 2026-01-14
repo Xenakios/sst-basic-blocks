@@ -33,7 +33,7 @@ namespace sst::basic_blocks::mechanics
 {
 inline SIMD_M128 sum_ps_to_ss(SIMD_M128 x)
 {
-    // FIXME: With SSE 3 this can be a dual hadd
+    // hsum_ps below seems to work well now we're SSE4.1
     auto a = SIMD_MM(add_ps)(x, SIMD_MM(movehl_ps)(x, x));
     return SIMD_MM(add_ss)(a, SIMD_MM(shuffle_ps)(a, a, SIMD_MM_SHUFFLE(0, 0, 0, 1)));
 }
@@ -65,6 +65,34 @@ inline float rcp(float x)
 {
     SIMD_MM(store_ss)(&x, SIMD_MM(rcp_ss)(SIMD_MM(load_ss)(&x)));
     return x;
+}
+
+inline float hsum_ps(SIMD_M128 v)
+{
+    // thanks Peter Cordes! https://stackoverflow.com/a/35270026
+    SIMD_M128 shuf = SIMD_MM(movehdup_ps)(v); // broadcast elements 3,1 to 2,0
+    SIMD_M128 sums = SIMD_MM(add_ps)(v, shuf);
+    shuf = SIMD_MM(movehl_ps)(shuf, sums); // high half -> low half
+    sums = SIMD_MM(add_ss)(sums, shuf);
+    return SIMD_MM(cvtss_f32)(sums);
+}
+
+template <int S>
+    requires(1 <= S && S <= 3)
+inline SIMD_M128 shuffle_all_ps(const SIMD_M128 v)
+{
+    if constexpr (S == 1)
+    {
+        return SIMD_MM(shuffle_ps)(v, v, 0 << 6 | 3 << 4 | 2 << 2 | 1);
+    }
+    else if constexpr (S == 2)
+    {
+        return SIMD_MM(shuffle_ps)(v, v, 1 << 6 | 0 << 4 | 3 << 2 | 2);
+    }
+    else // S == 3
+    {
+        return SIMD_MM(shuffle_ps)(v, v, 2 << 6 | 1 << 4 | 0 << 2 | 3);
+    }
 }
 
 } // namespace sst::basic_blocks::mechanics

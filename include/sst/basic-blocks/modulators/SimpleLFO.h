@@ -251,6 +251,7 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
     {
         attack(lshape);
 
+        objrngRef.reseedForDisplay();
         urng = [this]() -> float { return objrngRef.forDisplay(); };
 
         for (int i = 0; i < BLOCK_SIZE; ++i)

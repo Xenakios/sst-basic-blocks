@@ -402,6 +402,7 @@ struct ParamMetaData
         UNORDERED_MAP,     // out = discreteValues[(int)std::round(val)]
         MIDI_NOTE,    // uses C4 etc.. notation. The octaveOffset has 0 -> 69=A4, 1 = A5, -1 = A3
         LOGARITHMIC,  // A ln(v) / ln(B) + C
+        OFFSETPOWER,  // A+B*x^C
         USER_PROVIDED // TODO - implement
     } displayScale{LINEAR};
 
@@ -705,6 +706,21 @@ struct ParamMetaData
         return res;
     }
 
+    // underlyer value x is 0..1, formatted value is displayscale * (offset+range*x^topower)
+    ParamMetaData withOffsetPowerFormatting(std::string units, float offset, float range,
+                                            float topower, float displayscale)
+    {
+        auto res = *this;
+        res.minVal = 0.0f;
+        res.maxVal = 1.0f;
+        res.svA = offset;
+        res.svB = range;
+        res.svC = topower;
+        res.svD = displayscale;
+        res.unit = units;
+        res.displayScale = OFFSETPOWER;
+        return res;
+    }
     ParamMetaData withDimensionlessFormatting() { return withLinearScaleFormatting(""); }
 
     ParamMetaData withSemitoneFormatting()
@@ -1158,6 +1174,12 @@ inline std::optional<std::string> ParamMetaData::valueToString(float val,
             }
         }
         break;
+    case OFFSETPOWER:
+    {
+        float pval = svA + svB * std::pow(val, svC);
+        return fmt::format("{:.2f}{}{}", pval * svD, unitSeparator, unit);
+    }
+    break;
     case A_TWO_TO_THE_B:
         if (alternateScaleWhen == NO_ALTERNATE)
         {

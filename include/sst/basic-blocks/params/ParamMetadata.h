@@ -409,6 +409,36 @@ struct ParamMetaData
     std::string unit;
     std::string unitSeparator{" "};
     std::vector<std::tuple<std::string, float, float>> customValueLabelsWithAccuracy;
+    bool ordinalNumbering{false};
+    std::string getOrdinalEnding(const float v) const
+    {
+        switch ((int)std::round(v))
+        {
+        case 1:
+        case 21:
+        case 31:
+        case 41:
+        case 51:
+        case 61:
+            return "st";
+        case 2:
+        case 22:
+        case 32:
+        case 42:
+        case 52:
+        case 62:
+            return "nd";
+        case 3:
+        case 23:
+        case 33:
+        case 43:
+        case 53:
+        case 63:
+            return "rd";
+        default:
+            return "th";
+        }
+    }
 
     std::unordered_map<int, std::string> discreteValues;
     int decimalPlaces{2};
@@ -723,6 +753,19 @@ struct ParamMetaData
         res.displayScale = OFFSETPOWER;
         return res;
     }
+    ParamMetaData withHarmonicSeriesFormatting()
+    {
+        auto res = *this;
+        res.decimalPlaces = 0;
+        res.svA = 1.f;
+        res.svB = 0.f;
+        res.displayScale = LINEAR;
+        res.supportsStringConversion = true;
+        res.unit = "harmonic";
+        res.ordinalNumbering = true;
+        return res;
+    }
+
     ParamMetaData withDimensionlessFormatting() { return withLinearScaleFormatting(""); }
 
     ParamMetaData withSemitoneFormatting()
@@ -1170,9 +1213,10 @@ inline std::optional<std::string> ParamMetaData::valueToString(float val,
             }
             else
             {
-                return fmt::format("{:.{}f}{}{:s}", svA * val + svB,
-                                   (fs.isHighPrecision ? (decimalPlaces + 4) : decimalPlaces),
-                                   unitSeparator, unit);
+                return fmt::format(
+                    "{:.{}f}{}{:s}", svA * val + svB,
+                    (fs.isHighPrecision ? (decimalPlaces + 4) : decimalPlaces),
+                    ordinalNumbering ? getOrdinalEnding(val) + unitSeparator : unitSeparator, unit);
             }
         }
         else

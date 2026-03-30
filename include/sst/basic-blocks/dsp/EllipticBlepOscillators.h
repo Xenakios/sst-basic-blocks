@@ -140,7 +140,10 @@ template <typename Impl, typename SmoothingStrategy = LagSmoothingStrategy> stru
      * @param syncRatio the sync ratio as a multiple of frequency
      */
     void setSyncRatio(float syncRatio) { SmoothingStrategy::setTarget(sratio, syncRatio); }
-
+    void setFrequencySmoothingRateMS(float ms)
+    {
+        dphase.setRateInMilliseconds(ms, sampleRate, 1.0);
+    }
   protected:
     /*
      * At very high (above nyquist) frequencies we can end up occasionally

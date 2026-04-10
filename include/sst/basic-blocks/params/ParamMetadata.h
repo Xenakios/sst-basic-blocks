@@ -331,7 +331,7 @@ struct ParamMetaData
         FeatureState withAbsolute(bool e)
         {
             auto res = *this;
-            isAbsolute = e;
+            res.isAbsolute = e;
             return res;
         }
         FeatureState withTemposync(bool e)
@@ -1333,10 +1333,15 @@ inline std::optional<std::string> ParamMetaData::valueToString(float val,
         {
             // a bit backwards - this is the NON alternate case
             auto dp = decimalPlaces;
+            if (fs.isNoUnits)
+                return fmt::format("{:.{}f}", dval, (fs.isHighPrecision ? (dp + 4) : dp));
             return fmt::format("{:.{}f}{}{:s}", dval, (fs.isHighPrecision ? (dp + 4) : dp),
                                unitSeparator, unit);
         }
         auto dp = (alternateScaleDecimalPlaces >= 0) ? alternateScaleDecimalPlaces : decimalPlaces;
+        if (fs.isNoUnits)
+            return fmt::format("{:.{}f}", dval * alternateScaleRescaling,
+                               (fs.isHighPrecision ? (dp + 4) : dp));
         return fmt::format("{:.{}f}{}{:s}", dval * alternateScaleRescaling,
                            (fs.isHighPrecision ? (dp + 4) : dp), unitSeparator,
                            alternateScaleUnits);
@@ -1816,9 +1821,9 @@ ParamMetaData::modulationNaturalToString(float naturalBaseVal, float modulationN
         auto nvd = std::clamp(naturalBaseVal - modulationNatural, 0.f, 1.f);
         auto nv = std::clamp(naturalBaseVal, 0.f, 1.f);
 
-        auto v = (exp(svA + nv * (svB - svA)) - svC) / svD;
-        auto vu = (exp(svA + nvu * (svB - svA)) - svC) / svD;
-        auto vd = (exp(svA + nvd * (svB - svA)) - svC) / svD;
+        auto v = (exp(svA + nv * (svB - svA)) + svC) / svD;
+        auto vu = (exp(svA + nvu * (svB - svA)) + svC) / svD;
+        auto vd = (exp(svA + nvd * (svB - svA)) + svC) / svD;
 
         auto deltUp = vu - v;
         auto deltDn = vd - v;
@@ -1830,13 +1835,13 @@ ParamMetaData::modulationNaturalToString(float naturalBaseVal, float modulationN
             if (std::fabs(deltDn) < alternateScaleCutoff)
             {
                 deltDn *= alternateScaleRescaling;
-                deltaUpUnit = alternateScaleUnits;
+                deltaDnUnit = alternateScaleUnits;
             }
 
             if (std::fabs(deltUp) < alternateScaleCutoff)
             {
                 deltUp *= alternateScaleRescaling;
-                deltaDnUnit = alternateScaleUnits;
+                deltaUpUnit = alternateScaleUnits;
             }
         }
 
@@ -1844,18 +1849,20 @@ ParamMetaData::modulationNaturalToString(float naturalBaseVal, float modulationN
         result.value = fmt::format("{:.{}f}{}{}", deltUp, dp, unitSeparator, deltaUpUnit);
         if (isBipolar)
         {
-            if (deltDn > 0)
+            if (deltUp > 0)
             {
-                result.summary = fmt::format("+{:.{}f}{}{}", deltUp, dp, unitSeparator, unit);
+                result.summary =
+                    fmt::format("+/- {:.{}f}{}{}", deltUp, dp, unitSeparator, deltaUpUnit);
             }
             else
             {
-                result.summary = fmt::format("-/+ {:.{}f}{}{}", -deltUp, dp, unitSeparator, unit);
+                result.summary =
+                    fmt::format("-/+ {:.{}f}{}{}", -deltUp, dp, unitSeparator, deltaUpUnit);
             }
         }
         else
         {
-            result.summary = fmt::format("{:.{}f}{}{}", deltUp, dp, unitSeparator, unit);
+            result.summary = fmt::format("{:.{}f}{}{}", deltUp, dp, unitSeparator, deltaUpUnit);
         }
         result.changeUp = fmt::format("{:.{}f}", deltUp, dp);
         if (isBipolar)
@@ -1869,11 +1876,10 @@ ParamMetaData::modulationNaturalToString(float naturalBaseVal, float modulationN
 
         if (isBipolar)
             result.singleLineModulationSummary =
-                fmt::format("{}{}{} < {} > {}{}{}", result.valDown, unitSeparator, unit,
-                            result.baseValue, result.valUp, unitSeparator, unit);
+                fmt::format("{} < {} > {}", result.valDown, result.baseValue, result.valUp);
         else
             result.singleLineModulationSummary =
-                fmt::format("{} > {}{}{}", result.baseValue, result.valUp, unitSeparator, unit);
+                fmt::format("{} > {}", result.baseValue, result.valUp);
 
         return result;
     }
@@ -2019,7 +2025,7 @@ ParamMetaData::modulationNaturalFromString(std::string_view deltaNatural, float 
         try
         {
             auto nv = std::clamp(naturalBaseVal, 0.f, 1.f);
-            auto v = (exp(svA + nv * (svB - svA)) - svC) / svD;
+            auto v = (exp(svA + nv * (svB - svA)) + svC) / svD;
             auto mv = std::stof(std::string(deltaNatural));
             auto rv = v + mv;
             // See comment in valueFromString for the algebra here

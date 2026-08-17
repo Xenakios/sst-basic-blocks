@@ -71,10 +71,36 @@
 #include <fmt/core.h>
 #include <array>
 
+#include <stdexcept>
+
 #include "sst/basic-blocks/tables/TemposyncSupport.h"
+#include "sst/basic-blocks/mechanics/string-ops.h"
 
 namespace sst::basic_blocks::params
 {
+
+namespace detail
+{
+/*
+ * Type-ins used to go through std::stof, which follows LC_NUMERIC, so in a
+ * comma-decimal locale "0.5" stopped at the dot and silently became 0 - and the
+ * other way around in a dot-decimal one. mechanics::parseNumber takes either
+ * separator instead.
+ *
+ * Every caller below already sits inside a try/catch that turns a parse failure
+ * into an error message and nullopt, so keeping std::stof's throwing shape makes
+ * this a one-for-one swap rather than a rewrite of that error handling. It also
+ * drops the std::string round trip those call sites were making to satisfy stof.
+ */
+inline float toFloat(std::string_view v)
+{
+    auto r = mechanics::parseNumber(v);
+    if (!r)
+        throw std::invalid_argument("value is not a number");
+    return (float)*r;
+}
+} // namespace detail
+
 struct ParamMetaData
 {
     ParamMetaData() = default;
@@ -1631,9 +1657,9 @@ inline std::optional<float> ParamMetaData::valueFromString(std::string_view v, s
                 auto ps = vs.find("/");
                 auto num = vs.substr(0, ps);
                 auto den = vs.substr(ps + 1);
-                auto uv = std::stof(num);
-                auto dv = std::stof(den);
-                r = std::stof(std::string(v));
+                auto uv = detail::toFloat(num);
+                auto dv = detail::toFloat(den);
+                r = detail::toFloat(v);
                 if (isFrac && uv != 0 && dv != 0)
                 {
                     r = uv / dv;
@@ -1645,7 +1671,7 @@ inline std::optional<float> ParamMetaData::valueFromString(std::string_view v, s
             }
             else
             {
-                r = std::stof(std::string(v));
+                r = detail::toFloat(v);
             }
 
             assert(svA != 0);
@@ -1692,10 +1718,10 @@ inline std::optional<float> ParamMetaData::valueFromString(std::string_view v, s
                 auto ps = vs.find("/");
                 auto num = vs.substr(0, ps);
                 auto den = vs.substr(ps + 1);
-                auto uv = std::stof(num);
-                auto dv = std::stof(den);
+                auto uv = detail::toFloat(num);
+                auto dv = detail::toFloat(den);
                 if (uv == 0 || dv == 0)
-                    r = std::stof(std::string(v));
+                    r = detail::toFloat(v);
                 else
                     r = uv / dv;
             }
@@ -1704,7 +1730,7 @@ inline std::optional<float> ParamMetaData::valueFromString(std::string_view v, s
             {
                 auto ps = vs.find("1/");
                 auto ss = vs.substr(ps + 2);
-                auto uv = std::stof(ss);
+                auto uv = detail::toFloat(ss);
                 if (uv == 0)
                     r = 1.;
                 else
@@ -1712,7 +1738,7 @@ inline std::optional<float> ParamMetaData::valueFromString(std::string_view v, s
             }
             else
             {
-                r = std::stof(std::string(v));
+                r = detail::toFloat(v);
                 if (r < 0 && (features & (uint64_t)Features::BELOW_ONE_IS_INVERSE_FRACTION))
                 {
                     r = 1.0 / -r;
@@ -1760,17 +1786,25 @@ inline std::optional<float> ParamMetaData::valueFromString(std::string_view v, s
         if (v == "-inf")
             return minVal;
 
-        auto r = std::stof(std::string(v));
-        // A ln(r) / ln(B) + C = v
-        // (r - c) * lnB / A = lnv
-        auto lnv = (r - svC) * std::log(svB) / svA;
-        auto res = std::exp(lnv);
-        if (res < minVal || res > maxVal)
+        try
+        {
+            auto r = detail::toFloat(v);
+            // A ln(r) / ln(B) + C = v
+            // (r - c) * lnB / A = lnv
+            auto lnv = (r - svC) * std::log(svB) / svA;
+            auto res = std::exp(lnv);
+            if (res < minVal || res > maxVal)
+            {
+                errMsg = rangeMsg();
+                return std::nullopt;
+            }
+            return res;
+        }
+        catch (const std::exception &)
         {
             errMsg = rangeMsg();
             return std::nullopt;
         }
-        return res;
     }
     break;
 
@@ -1778,7 +1812,7 @@ inline std::optional<float> ParamMetaData::valueFromString(std::string_view v, s
     {
         try
         {
-            auto r = std::stof(std::string(v));
+            auto r = detail::toFloat(v);
 
             r = applyAlternateUnscalingOnFromString(v, r);
 
@@ -1812,7 +1846,7 @@ inline std::optional<float> ParamMetaData::valueFromString(std::string_view v, s
             if (v == "-inf")
                 return 0.f;
 
-            auto r = std::stof(std::string(v));
+            auto r = detail::toFloat(v);
             auto db = pow(10.f, r / 20);
             auto lv = std::cbrt(db / svA);
             if (lv < minVal || lv > maxVal)
@@ -2175,7 +2209,7 @@ ParamMetaData::modulationNaturalFromString(std::string_view deltaNatural, float 
         try
         {
             auto rng = maxVal - minVal;
-            auto mv = std::stof(std::string(deltaNatural)) / 100.f * rng;
+            auto mv = detail::toFloat(deltaNatural) / 100.f * rng;
             if (std::fabs(mv) > rng)
             {
                 errMsg = "Maximum depth: 100 %";
@@ -2196,7 +2230,7 @@ ParamMetaData::modulationNaturalFromString(std::string_view deltaNatural, float 
     {
         try
         {
-            auto mv = std::stof(std::string(deltaNatural)) / svA;
+            auto mv = detail::toFloat(deltaNatural) / svA;
             if (std::fabs(mv) > (maxVal - minVal))
             {
                 errMsg = fmt::format("Maximum depth: {}{}{}", (maxVal - minVal) * svA,
@@ -2216,7 +2250,7 @@ ParamMetaData::modulationNaturalFromString(std::string_view deltaNatural, float 
         try
         {
             auto xbv = svA * pow(2, svB * naturalBaseVal) + svD;
-            auto mv = std::stof(std::string(deltaNatural));
+            auto mv = detail::toFloat(deltaNatural);
             auto rv = xbv + mv;
             if (rv < 0)
             {
@@ -2245,7 +2279,7 @@ ParamMetaData::modulationNaturalFromString(std::string_view deltaNatural, float 
         {
             auto bv = naturalBaseVal * naturalBaseVal * naturalBaseVal * svA;
             auto db = 20 * std::log10(bv);
-            auto mv = std::stof(std::string(deltaNatural));
+            auto mv = detail::toFloat(deltaNatural);
             auto rv = db + mv;
             auto av = std::cbrt(pow(10.f, rv / 20) / svA);
             return (av - naturalBaseVal);
@@ -2263,7 +2297,7 @@ ParamMetaData::modulationNaturalFromString(std::string_view deltaNatural, float 
         {
             auto nv = std::clamp(naturalBaseVal, 0.f, 1.f);
             auto v = (exp(svA + nv * (svB - svA)) + svC) / svD;
-            auto mv = std::stof(std::string(deltaNatural));
+            auto mv = detail::toFloat(deltaNatural);
             auto rv = v + mv;
             // See comment in valueFromString for the algebra here
             auto drc = std::max((float)(svD * rv - svC), 0.00000001f);

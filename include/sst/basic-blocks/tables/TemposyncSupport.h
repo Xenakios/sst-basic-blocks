@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <string>
 #include <optional>
+#include <limits>
 #include <cmath>
 #include <cstdio>
 #include <cctype>
@@ -166,6 +167,32 @@ inline std::string toString(const Note &n)
     return "dotted whole note";
 }
 
+namespace detail
+{
+// std::stoi throws (invalid_argument on no digits, out_of_range on overflow) but
+// fromString promises nullopt on anything unrecognized, so parse without it.
+// Mirrors stoi's prefix semantics for the character set that can reach here:
+// skip leading blanks, consume digits, stop at the first non-digit.
+inline std::optional<int> prefixToInt(const std::string &s)
+{
+    size_t i{0};
+    while (i < s.size() && s[i] == ' ')
+        ++i;
+    if (i >= s.size() || s[i] < '0' || s[i] > '9')
+        return std::nullopt;
+
+    int64_t acc{0};
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9')
+    {
+        acc = acc * 10 + (s[i] - '0');
+        if (acc > std::numeric_limits<int>::max())
+            return std::nullopt;
+        ++i;
+    }
+    return (int)acc;
+}
+} // namespace detail
+
 // Parse a temposync notation string back into a Note - the inverse of toString
 // (and toStringCompact). Handles verbose words ("1/4 triplet", "whole note",
 // "dotted whole note"), compact suffixes ("1/4 T", "2W", "1W D"), and the
@@ -220,11 +247,22 @@ inline std::optional<Note> fromString(const std::string &s)
     {
         auto slpos = numPart.find('/');
         if (slpos == std::string::npos)
-            num = std::stoi(numPart);
+        {
+            auto n = detail::prefixToInt(numPart);
+            if (!n)
+                return std::nullopt;
+            num = *n;
+        }
         else
         {
-            num = std::stoi(numPart.substr(0, slpos));
-            den = std::stoi(numPart.substr(slpos + 1));
+            // hasDigit only proves a digit somewhere in numPart, not on both sides
+            // of the slash, so "1/" and "/4" can still arrive with an empty side.
+            auto n = detail::prefixToInt(numPart.substr(0, slpos));
+            auto d = detail::prefixToInt(numPart.substr(slpos + 1));
+            if (!n || !d)
+                return std::nullopt;
+            num = *n;
+            den = *d;
         }
     }
     else if (!hasWhole) // no number and not a bare "whole ..." form

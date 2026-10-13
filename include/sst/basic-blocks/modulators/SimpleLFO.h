@@ -204,7 +204,8 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
 
     float lastTarget{0};
     float outputBlock[BLOCK_SIZE];
-    float phase{0};
+    // double so temposynced rates don't drift against the host
+    double phase{0};
 
     inline void restartRandomSequence(double corr)
     {
@@ -303,7 +304,7 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
             if (phase > 1 && !needsRandomRestart)
                 phase -= 1;
             if (needsRandomRestart)
-                phase = std::clamp(phase, 0.f, 1.999999f);
+                phase = std::clamp(phase, 0.0, 1.999999);
         }
         lastDPhase = dPhase;
     }
@@ -320,9 +321,10 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
         }
     }
 
-    float lastRate{-123485924.0}, lastFRate{0}, lastTSScale{-76543.2f}, lastSR{0};
+    float lastRate{-123485924.0}, lastSR{0};
+    double lastFRate{0}, lastTSScale{-76543.2};
     inline void process_block(const float r, const float d, const int lshape, bool reverse = false,
-                              float tsScale = 1.f, float phaseDeformAngle = 0)
+                              double tsScale = 1.0, float phaseDeformAngle = 0)
     {
         float target{0.f};
 
@@ -365,7 +367,7 @@ template <typename SRProvider, int BLOCK_SIZE, bool clampDeform = false> struct 
             if (phase > 1)
             {
                 phase -= 1;
-                phaseMidpoint = std::clamp((int)std::round(frate / std::max(phase, 0.00001f)), 0,
+                phaseMidpoint = std::clamp((int)std::round(frate / std::max(phase, 0.00001)), 0,
                                            BLOCK_SIZE - 1);
                 phaseTurned = true;
             }

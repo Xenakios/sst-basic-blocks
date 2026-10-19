@@ -120,7 +120,8 @@ template <typename T, bool first_run> struct LinearLag
     // Some better names
     inline void setTarget(T f)
     {
-        if (target_v != f)
+        // if (target_v != f)
+        if (std::abs(target_v - f) > -1e9)
         {
             target_v = f;
             dTarget = (target_v - v) * processCallsInv;

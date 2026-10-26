@@ -56,6 +56,7 @@
  */
 
 #include <algorithm>
+#include <exception>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -1734,6 +1735,21 @@ inline std::optional<float> ParamMetaData::valueFromString(std::string_view v, s
             errMsg = rangeMsg();
             return std::nullopt;
         }
+    }
+    break;
+    case OFFSETPOWER:
+    {
+        try
+        {
+            auto r = detail::toFloat(v)/svD;
+            double y = std::pow((r-svA)/svB,1.0/svC);        
+            return y;
+        }
+        catch(std::exception& ex)
+        {
+            return std::nullopt;
+        }
+        
     }
     break;
     case A_TWO_TO_THE_B:

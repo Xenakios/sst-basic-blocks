@@ -1431,7 +1431,7 @@ inline std::optional<std::string> ParamMetaData::valueToString(float val,
     case OFFSETPOWER:
     {
         float pval = svA + svB * std::pow(val, svC);
-        return fmt::format("{:.2f}{}{}", pval * svD, unitSeparator, unit);
+        return fmt::format("{:.{}f}{}{}", pval * svD, decimalPlaces, unitSeparator, unit);
     }
     break;
     case A_TWO_TO_THE_B:
